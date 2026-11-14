@@ -1,0 +1,18 @@
+# The stack on this machine, for test/run-local.sh: the api built from a
+# cchess-be checkout beside this repo, and Caddy on 8080/8443 so it doesn't
+# need root or clash with anything on 80/443.
+
+x-api-build: &api-build
+  image: cchess-be:local
+  build:
+    context: ${CCHESS_BE_DIR:-../cchess-be}
+
+services:
+  caddy:
+    ports: !override
+      - '8080:80'
+      - '8443:443'
+  migrate:
+    <<: *api-build
+  api:
+    <<: *api-build

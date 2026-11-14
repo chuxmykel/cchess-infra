@@ -1,0 +1,44 @@
+name: Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: test/static-checks.sh
+
+  stack:
+    name: Stack smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cchess-infra
+      # The api is built from cchess-be's develop branch, beside this repo
+      # as test/run-local.sh expects. A private repo needs a token with read
+      # access to it, as the CCHESS_BE_TOKEN secret.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/cchess-be
+          ref: develop
+          path: cchess-be
+          token: ${{ secrets.CCHESS_BE_TOKEN || github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: cchess-infra/.nvmrc
+      - run: npm install --no-audit --no-fund
+        working-directory: cchess-infra
+      - run: test/run-local.sh
+        working-directory: cchess-infra

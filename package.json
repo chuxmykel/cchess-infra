@@ -1,0 +1,16 @@
+{
+  "name": "cchess-infra",
+  "private": true,
+  "description": "Hosting for cchess-be on one VPS: Docker Compose (Caddy, the api, Postgres, backups), provisioning, and its tests.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "test/run-local.sh",
+    "check": "test/static-checks.sh"
+  },
+  "devDependencies": {
+    "socket.io-client": "~4.8.4"
+  }
+}

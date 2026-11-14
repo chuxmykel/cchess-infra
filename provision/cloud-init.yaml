@@ -1,0 +1,76 @@
+#cloud-config
+# A fresh Ubuntu 24.04 VPS, ready for scripts/deploy.sh: paste this as the
+# server's "user data" / cloud-init when creating it, with your SSH public
+# key in place of the one below.
+#
+# - a `deploy` user, SSH key only; root and password logins off
+# - ufw: SSH, HTTP and HTTPS in, nothing else
+# - Docker publishing ports on the box itself unless a service says
+#   otherwise (daemon.json's "ip"): Docker's own firewall rules come before
+#   ufw's, so a port published on every address would be open whatever ufw
+#   says. compose.yaml names Caddy's addresses; anything else stays local.
+# - security updates installed by themselves, fail2ban on SSH
+# - Docker Engine and the Compose plugin, from Docker's own apt repository
+# - a 2 GB swap file: overflow for Postgres and the api on a small box
+#   (512 MiB swaps even at idle), and for building the backup image
+
+users:
+  - name: deploy
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: 'ALL=(ALL) NOPASSWD:ALL'
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA...replace-with-your-public-key you@laptop
+
+disable_root: true
+ssh_pwauth: false
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - rsync
+
+apt:
+  sources:
+    docker:
+      source: 'deb [arch=amd64,arm64 signed-by=$KEY_FILE] https://download.docker.com/linux/ubuntu $RELEASE stable'
+      keyid: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-cchess.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  # "ip": a port published without an address of its own listens on the
+  # box only (127.0.0.1), never on the internet - see the header. And
+  # Docker's own log rotation, for anything run outside compose.yaml.
+  - path: /etc/docker/daemon.json
+    content: |
+      { "ip": "127.0.0.1", "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "5" } }
+
+runcmd:
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - usermod -aG docker deploy
+  - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw allow 443/udp
+  - ufw --force enable
+  - systemctl enable --now fail2ban docker
+  - systemctl restart ssh
+  - install -d -o deploy -g deploy -m 750 /opt/cchess

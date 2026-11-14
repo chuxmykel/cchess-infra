@@ -1,0 +1,18 @@
+# HTTPS for $DOMAIN. HTTP redirects to HTTPS, and Socket.IO's WebSocket
+# upgrades pass through reverse_proxy as they are.
+#
+# $CADDY_TLS is an email address, for Let's Encrypt (a real server), or
+# "internal" for Caddy's own local CA (the local and VM test stacks, whose
+# DOMAIN is localhost or an IP address). Naming it here rather than leaving
+# it to automatic HTTPS also matters for an IP address: a client sends no
+# server name (SNI) to one, and only a site with its own tls line gets a
+# certificate for connections that name none.
+{
+	default_sni {$DOMAIN}
+}
+
+{$DOMAIN} {
+	tls {$CADDY_TLS}
+	encode zstd gzip
+	reverse_proxy api:3000
+}
