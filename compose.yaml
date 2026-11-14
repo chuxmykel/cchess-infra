@@ -1,0 +1,135 @@
+# cchess on one box: Caddy (TLS) -> api (cchess-be) -> Postgres, plus nightly
+# backups. Only Caddy publishes ports. See README.md.
+#
+# Every value comes from .env (scripts/gen-secrets.sh makes it from
+# .env.example): Compose reads it to fill in the ${...} below, and the api
+# and migrate containers get all of it as their environment.
+
+name: cchess
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '5'
+
+x-api: &api
+  image: ${API_IMAGE:-cchess-be:current}
+  env_file: ${ENV_FILE:-.env}
+  environment:
+    DB_HOST: postgres
+    DB_PORT: '5432'
+    PORT: '3000'
+  logging: *logging
+
+services:
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    # The only service reachable from outside, so the only one naming the
+    # addresses it listens on - every IPv4 one, and every IPv6 one. A port
+    # published without an address listens on the server itself only
+    # (provision/cloud-init.yaml's daemon.json), and test/static-checks.sh
+    # refuses one on any other service.
+    ports:
+      - '0.0.0.0:80:80'
+      - '[::]:80:80'
+      - '0.0.0.0:443:443'
+      - '[::]:443:443'
+      - '0.0.0.0:443:443/udp'
+      - '[::]:443:443/udp'
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      CADDY_TLS: ${CADDY_TLS:?set CADDY_TLS in .env}
+    volumes:
+      # The folder, not the file: a mounted file stays the one first mounted
+      # (its inode) when a deploy replaces it, so Caddy would never see a
+      # change.
+      - ./caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *logging
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:?set DB_USERNAME in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:?set DB_NAME in .env}
+    # Postgres 18's image keeps its data under a versioned folder inside
+    # this one, so a major upgrade can sit beside the old cluster.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  # Applies pending migrations, then exits - the api starts only once it has.
+  # The api still runs them on boot too (migrationsRun), which finds nothing
+  # left to do; this lets that come off without changing anything here.
+  migrate:
+    <<: *api
+    restart: 'no'
+    command: ['node', 'node_modules/typeorm/cli.js', 'migration:run', '-d', 'dist/database/data-source.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *api
+    restart: unless-stopped
+    # tini as PID 1 passes SIGTERM on to Node, whose shutdown hooks save the
+    # games under way before the database closes; this is how long they get.
+    init: true
+    stop_grace_period: 30s
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  backup:
+    build: ./backup
+    image: cchess-backup:local
+    restart: unless-stopped
+    command: ['backup.sh', '--loop']
+    environment:
+      PGHOST: postgres
+      PGUSER: ${DB_USERNAME}
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: ${DB_NAME}
+      BACKUP_HOUR: ${BACKUP_HOUR:-3}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      RCLONE_REMOTE: ${RCLONE_REMOTE:-}
+    env_file: ${ENV_FILE:-.env}
+    volumes:
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+  # Only for CLUSTER_WORKERS > 1 (cchess-be's README): start with
+  # `docker compose --profile cluster up -d`, and set REDIS_HOST=redis.
+  redis:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    profiles: [cluster]
+    logging: *logging
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  backups:
