@@ -42,3 +42,30 @@ jobs:
         working-directory: cchess-infra
       - run: test/run-local.sh
         working-directory: cchess-infra
+
+  # The app's e2e stack (compose.e2e.yaml): built, migrated, seeded with the
+  # e2e accounts, and answering - so the overlay can't drift from the stack.
+  e2e-stack:
+    name: E2E stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cchess-infra
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/cchess-be
+          ref: develop
+          path: cchess-be
+          token: ${{ secrets.CCHESS_BE_TOKEN || github.token }}
+      - run: test/e2e-stack.sh up
+        working-directory: cchess-infra
+      - run: test/e2e-stack.sh check
+        working-directory: cchess-infra
+      - if: failure()
+        run: test/e2e-stack.sh logs
+        working-directory: cchess-infra
+      - if: always()
+        run: test/e2e-stack.sh down
+        working-directory: cchess-infra
