@@ -26,7 +26,8 @@ covers what was tested, what's missing, and costs.
 | `scripts/gen-secrets.sh` | Makes `.env`, generating the DB password and JWT secrets |
 | `scripts/deploy.sh` | Builds the api image for the server's CPU, ships it over ssh, restarts |
 | `docs/reports/` | Dated reports: what was tested, measured and found, as of each one's date |
-| `test/` | `run-local.sh` runs the whole stack in Docker here and smoke-tests it; `run-remote.sh` smoke-tests a deployed server; `static-checks.sh` |
+| `test/` | `run-local.sh` runs the whole stack in Docker here and smoke-tests it; `run-remote.sh` smoke-tests a deployed server; `static-checks.sh`; `e2e-stack.sh`, the app's e2e backend |
+| `compose.e2e.yaml` | The app's e2e backend (with `compose.local.yaml`): the api seeded and published on 127.0.0.1, no Caddy |
 
 ## Setting up a server
 
@@ -127,3 +128,32 @@ on a server with real players. When the server's `CADDY_TLS` is
 `internal`, its CA is fetched and trusted for the run.
 
 CI runs the local suite and the static checks (`.github/workflows/test.yml`).
+
+## The app's e2e backend
+
+cchess's Maestro suite (its `scripts/e2e/run.sh`, on the iOS Simulator and
+the Android emulator) plays against this stack, made for it by
+`compose.e2e.yaml`:
+
+```sh
+test/e2e-stack.sh up      # build, migrate, seed, and wait for the api
+test/e2e-stack.sh check   # the api answers, and e2e_main can sign in
+test/e2e-stack.sh logs    # migrate's, seed's and the api's logs
+test/e2e-stack.sh down    # stop it, and throw its database away
+```
+
+- The api, built from `../cchess-be` (or `$CCHESS_BE_DIR`), is published on
+  `127.0.0.1:$E2E_API_PORT` (3100, clear of a dev backend on 3000) - the
+  simulator reaches it there, the emulator as `10.0.2.2`. Caddy isn't
+  started: a simulator doesn't trust its local CA, and an Android app trusts
+  no CA a user added. Nor are backups.
+- A one-shot `seed` service, after `migrate` and before the api, runs
+  cchess-be's seeders with `SEED_E2E=1`: the bots and the e2e accounts and
+  games (cchess-be's README, under Commands). It's built from the Dockerfile's
+  `build` stage, which has the dev dependencies the seeders' CLI needs.
+- Its own project name (`cchess-e2e`) and `test/e2e.env`, so it never
+  touches the smoke test's stack, nor a server's.
+- Test only: it publishes a port besides Caddy's, which `static-checks.sh`
+  refuses in `compose.yaml` (it still checks the overlay parses).
+
+CI brings it up and checks it on every push (the `E2E stack` job).
