@@ -1,0 +1,43 @@
+# The stack for the app's end-to-end tests (cchess's scripts/e2e/run.sh),
+# over compose.yaml and compose.local.yaml: the api built from ../cchess-be,
+# seeded with the accounts and games the flows expect, and published on
+# 127.0.0.1:$E2E_API_PORT for a simulator or emulator to reach.
+#
+# Test only, never on a server: it publishes a port besides Caddy's, which
+# test/static-checks.sh refuses in compose.yaml. Caddy isn't started - a
+# simulator doesn't trust its local CA, and an Android app trusts no CA a
+# user added - and neither are the backups.
+
+services:
+  caddy:
+    profiles: [off]
+  backup:
+    profiles: [off]
+
+  # cchess-be's seeders after the migrations: the bots the scripted opponent
+  # plays as, and (SEED_E2E=1) the e2e accounts and their games. Built from
+  # the Dockerfile's build stage, which has the dev dependencies the seeders'
+  # CLI needs; the production image doesn't.
+  seed:
+    image: cchess-be:e2e-seed
+    build:
+      context: ${CCHESS_BE_DIR:-../cchess-be}
+      target: build
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      DB_HOST: postgres
+      DB_PORT: '5432'
+      NODE_ENV: test
+      SEED_E2E: '1'
+    command: ['node', 'node_modules/typeorm-extension/bin/cli.mjs', 'seed', 'run', '-d', 'dist/database/data-source.js']
+    restart: 'no'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    ports:
+      - '127.0.0.1:${E2E_API_PORT:-3100}:3000'
+    depends_on:
+      seed:
+        condition: service_completed_successfully
