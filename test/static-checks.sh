@@ -14,6 +14,7 @@ rm -f test/.state/example.env
 scripts/gen-secrets.sh test/.state/example.env >/dev/null
 ENV_FILE=test/.state/example.env docker compose --env-file test/.state/example.env -f compose.yaml config -q
 ENV_FILE=test/test.env docker compose --env-file test/test.env -f compose.yaml -f compose.local.yaml config -q
+ENV_FILE=test/e2e.env docker compose --env-file test/e2e.env -f compose.yaml -f compose.local.yaml -f compose.e2e.yaml config -q
 
 echo "== only caddy publishes ports"
 # Docker's firewall rules come before ufw's, so a published port is open to
@@ -35,7 +36,7 @@ print("ok: " + ", ".join(sorted(published)))
 echo "== shellcheck"
 docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 \
   backup/backup.sh backup/restore.sh scripts/gen-secrets.sh scripts/deploy.sh \
-  test/run-local.sh test/run-remote.sh test/static-checks.sh
+  test/run-local.sh test/run-remote.sh test/static-checks.sh test/e2e-stack.sh
 
 echo "== cloud-init schema"
 docker run --rm -v "$PWD/provision:/p:ro" ubuntu:24.04 sh -c \
