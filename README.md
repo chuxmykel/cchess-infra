@@ -1,6 +1,12 @@
 # cchess-infra
 
-Hosting for [cchess-be](../cchess-be) on one VPS, using Docker Compose:
+[![Test](https://github.com/chuxmykel/cchess-infra/actions/workflows/test.yml/badge.svg?branch=develop)](https://github.com/chuxmykel/cchess-infra/actions/workflows/test.yml)
+![Docker Compose](https://img.shields.io/badge/Docker_Compose-2496ed)
+![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04-e95420)
+
+Hosting for [cchess-be](https://github.com/chuxmykel/cchess-be), the backend
+of the [cchess](https://github.com/chuxmykel/cchess) chess app: one VPS,
+Docker Compose, automatic HTTPS and nightly backups, for about $4-5 a month.
 
 ```
 internet ──443/80──▶ caddy ──▶ api (cchess-be) ──▶ postgres
@@ -8,11 +14,36 @@ internet ──443/80──▶ caddy ──▶ api (cchess-be) ──▶ postgre
                                          backup ────┘ nightly pg_dump (+ off-site copy)
 ```
 
-One box is all the backend can use. It keeps games, clocks and the seek
-queue in process memory, and its optional worker sharding goes over Node's
-own cluster IPC, so it runs as exactly one process on one host. See
-cchess-be's CLAUDE.md for details. [The November 2026 hosting report](docs/reports/2026-11-hosting.md)
-covers what was tested, what's missing, and costs.
+**At a glance**
+
+- **One box, by design.** The backend keeps games, clocks and the seek
+  queue in process memory, and its optional worker sharding goes over
+  Node's own cluster IPC, so it runs as one process on one host
+  (cchess-be's [CLAUDE.md](https://github.com/chuxmykel/cchess-be/blob/develop/CLAUDE.md)
+  has the details).
+- **Small.** It's tested on a replica of DigitalOcean's $4 droplet
+  (1 vCPU, 512 MiB): 200 simultaneous games under a no-thinking-time stress
+  test, with a median move of 0.6 s.
+- **Tested end to end.** A local Docker run and a deployed server both get
+  the same smoke tests through real TLS: sign-up, an authenticated
+  WebSocket, restarts, and a backup-restore round trip.
+- **Also the app's e2e backend.** cchess's Maestro suite plays against a
+  seeded variant of this stack.
+
+[The November 2026 hosting report](docs/reports/2026-11-hosting.md) covers
+what was tested, what's missing, and the costs on each provider.
+
+## Quick start
+
+Docker and Node, with [cchess-be](https://github.com/chuxmykel/cchess-be)
+checked out beside this repo:
+
+```sh
+npm test            # the whole stack in Docker, smoke-tested, then torn down
+KEEP=1 npm test     # ...left running on https://localhost:8443
+```
+
+To put it on a server, see [Setting up a server](#setting-up-a-server).
 
 ## What's here
 
@@ -79,7 +110,7 @@ ssh deploy@api.example.com 'docker tag cchess-be:<commit> cchess-be:current && c
 ```
 
 Migrations only go forward, so a rollback across one needs
-`migration:revert` first (cchess-be's README).
+`migration:revert` first (cchess-be's README, under Commands).
 
 ## Backups
 
@@ -149,7 +180,7 @@ test/e2e-stack.sh down    # stop it, and throw its database away
   no CA a user added. Nor are backups.
 - A one-shot `seed` service, after `migrate` and before the api, runs
   cchess-be's seeders with `SEED_E2E=1`: the bots and the e2e accounts and
-  games (cchess-be's README, under Commands). It's built from the Dockerfile's
+  games (cchess-be's README, under Testing). It's built from the Dockerfile's
   `build` stage, which has the dev dependencies the seeders' CLI needs.
 - Its own project name (`cchess-e2e`) and `test/e2e.env`, so it never
   touches the smoke test's stack, nor a server's.
@@ -157,3 +188,13 @@ test/e2e-stack.sh down    # stop it, and throw its database away
   refuses in `compose.yaml` (it still checks the overlay parses).
 
 CI brings it up and checks it on every push (the `E2E stack` job).
+
+## Related repos
+
+- [cchess](https://github.com/chuxmykel/cchess): the iOS and Android app
+- [cchess-be](https://github.com/chuxmykel/cchess-be): the server this
+  deploys
+
+## License
+
+No license has been chosen yet, so all rights are reserved.
