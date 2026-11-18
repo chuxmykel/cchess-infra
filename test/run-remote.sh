@@ -2,7 +2,7 @@
 # The smoke tests against a deployed server, over its public URL and ssh:
 #
 #   test/run-remote.sh <ssh host> <https base URL>
-#   ALLOW_DESTRUCTIVE=1 test/run-remote.sh cchess-do-sim https://192.168.1.181
+#   ALLOW_DESTRUCTIVE=1 test/run-remote.sh <ssh host> <https base URL>
 #
 # Without ALLOW_DESTRUCTIVE=1 only the read-only checks run. With it, the
 # api is restarted and stopped and a backup is restored over the database,

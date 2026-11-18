@@ -286,7 +286,7 @@ To run the tests against a deployed server:
 
 ```sh
 test/run-remote.sh <ssh host> https://<domain>                       # the read-only checks
-ALLOW_DESTRUCTIVE=1 test/run-remote.sh cchess-do-sim https://192.168.1.181   # all of them
+ALLOW_DESTRUCTIVE=1 test/run-remote.sh <ssh host> https://<domain>   # all of them - a test server only
 ```
 
 Without `ALLOW_DESTRUCTIVE=1` only the read-only checks run. With it, the api is
