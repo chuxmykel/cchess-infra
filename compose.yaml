@@ -111,6 +111,7 @@ services:
       PGDATABASE: ${DB_NAME}
       BACKUP_HOUR: ${BACKUP_HOUR:-3}
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      RESTORE_DRILL_DAY: ${RESTORE_DRILL_DAY-1}
       RCLONE_REMOTE: ${RCLONE_REMOTE:-}
     env_file: ${ENV_FILE:-.env}
     volumes:

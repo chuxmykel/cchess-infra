@@ -165,6 +165,16 @@ test('announces maintenance, shown to the app, and ends it', destructive, async 
   assert.equal(ended.startsAt, null);
 });
 
+// Not destructive: the drill restores into a throwaway database beside the
+// real one. It needs a backup, so it takes one.
+test('passes a restore drill on the newest backup', () => {
+  compose('exec', '-T', 'backup', 'backup.sh');
+  const out = compose('exec', '-T', 'backup', 'restore-drill.sh');
+  assert.match(out, /passed: cchess-.*\.dump restored in \d+s/);
+  const databases = compose('exec', '-T', 'postgres', 'sh', '-c', 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT datname FROM pg_database"');
+  assert.doesNotMatch(databases, /cchess_restore_drill/, 'the drill left its database behind');
+});
+
 let survivor;
 
 test('keeps its data through an api restart', destructive, async () => {

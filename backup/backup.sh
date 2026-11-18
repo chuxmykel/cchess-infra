@@ -5,7 +5,9 @@
 # through RCLONE_CONFIG_OFFSITE_* in .env) - copies each one there too.
 #
 #   backup.sh          one backup now
-#   backup.sh --loop   one every day at $BACKUP_HOUR (UTC), forever
+#   backup.sh --loop   one every day at $BACKUP_HOUR (UTC), forever - and
+#                      on day $RESTORE_DRILL_DAY of the month (1; empty for
+#                      never), a restore drill after it (restore-drill.sh)
 #
 # Connection settings come from PGHOST/PGUSER/PGPASSWORD/PGDATABASE.
 set -eu
@@ -14,6 +16,7 @@ BACKUP_DIR=${BACKUP_DIR:-/backups}
 BACKUP_KEEP=${BACKUP_KEEP:-7}
 BACKUP_HOUR=${BACKUP_HOUR:-3}
 RCLONE_REMOTE=${RCLONE_REMOTE:-}
+RESTORE_DRILL_DAY=${RESTORE_DRILL_DAY-1}
 
 log() { echo "[backup] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 
@@ -53,6 +56,9 @@ if [ "${1:-}" = "--loop" ]; then
     sleep "$(seconds_until_next_run)"
     # A failed run is logged and retried tomorrow rather than ending the loop.
     backup_once || log "FAILED"
+    if [ -n "$RESTORE_DRILL_DAY" ] && [ "$(date -u +%d | sed "s/^0//")" = "$RESTORE_DRILL_DAY" ]; then
+      restore-drill.sh || true
+    fi
   done
 else
   backup_once

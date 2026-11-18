@@ -56,7 +56,7 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
 | `compose.yaml` | The production stack: `caddy`, `postgres`, `migrate` (applies pending migrations on every deploy, then exits), `api`, `backup`, and `redis` (only under the `cluster` profile) |
 | `caddy/Caddyfile` | HTTPS for `$DOMAIN` (Let's Encrypt, or Caddy's own CA when `CADDY_TLS=internal`), proxying to the api, WebSockets included |
 | `.env.example` | Every setting. The real `.env` lives only on the server |
-| `backup/` | The backup image: `backup.sh` (pg_dump, retention, optional rclone upload), `restore.sh` |
+| `backup/` | The backup image: `backup.sh` (pg_dump, retention, optional rclone upload), `restore.sh`, `restore-drill.sh` (a monthly test restore) |
 | `provision/cloud-init.yaml` | A fresh Ubuntu 24.04 VPS: deploy user, firewall, updates, Docker |
 | `scripts/gen-secrets.sh` | Makes `.env`, generating the DB password and JWT secrets you've left blank |
 | `scripts/deploy.sh` | Builds the api image for the server's CPU, ships it over ssh, and restarts once no live game is being played |
@@ -201,6 +201,26 @@ docker compose exec backup restore.sh latest
 docker compose start api
 ```
 
+### The restore drill
+
+A backup no one has restored is a guess. On day `RESTORE_DRILL_DAY` of each
+month (the 1st; empty for never), after that day's backup, `backup`
+test-restores the newest off-site copy - the newest one on the server when
+`RCLONE_REMOTE` isn't set - into a throwaway database beside the real one,
+never over it. It passes when the restore works, the backup has every
+migration the database has, and it holds users and games, no more than
+there are now. Then the throwaway database is dropped. Players aren't
+affected; the restore only adds load while it runs.
+
+```sh
+docker compose exec backup restore-drill.sh          # one now
+docker compose logs backup | grep restore-drill      # how the last ones went
+```
+
+It logs how long the restore took: about how long a real recovery would
+keep the server down. Nothing alerts you when one fails yet, so look at
+the log after the 1st.
+
 ## Testing
 
 ```sh
@@ -220,6 +240,7 @@ The tests check:
 - that the maintenance controls answer inside the api's container and
   not through Caddy, and that maintenance announced is shown to the app;
 - that data survives an api restart;
+- a restore drill, leaving no database behind;
 - a backup and restore round trip, and backup retention;
 - that the api stops within its grace period.
 
