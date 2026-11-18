@@ -27,6 +27,7 @@ internet ──443/80──▶ caddy ──▶ api (cchess-be) ──▶ postgre
   test, with a median move of 0.6 s.
 - **Deploys between games.** A deploy announces maintenance, which stops
   new live games, and restarts once the ones in progress have finished.
+  Security updates never reboot or restart Docker by themselves.
 - **Tested end to end.** A local Docker run and a deployed server both get
   the same smoke tests through real TLS: sign-up, an authenticated
   WebSocket, restarts, and a backup-restore round trip.
@@ -159,6 +160,22 @@ scripts/maintenance.sh deploy@api.example.com end        # end it
 
 It talks to the api from inside its container, the only place the api
 answers it; Caddy refuses `/internal/*` from the internet as well.
+
+### Rebooting
+
+Security updates install by themselves every day (`unattended-upgrades`),
+but never reboot the server, nor restart Docker and the containers with
+it: `provision/cloud-init.yaml` says so explicitly, and turns on Docker's
+`live-restore`, so the containers keep running through a Docker upgrade.
+A kernel update only takes effect after a reboot, which you time yourself:
+
+```sh
+ssh deploy@api.example.com cat /var/run/reboot-required   # there when one's waiting
+scripts/maintenance.sh deploy@api.example.com drain && ssh deploy@api.example.com sudo reboot
+```
+
+Everything comes back up on its own after the reboot, with no maintenance
+set.
 
 ## Backups
 

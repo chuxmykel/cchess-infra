@@ -9,7 +9,8 @@
 #   otherwise (daemon.json's "ip"): Docker's own firewall rules come before
 #   ufw's, so a port published on every address would be open whatever ufw
 #   says. compose.yaml names Caddy's addresses; anything else stays local.
-# - security updates installed by themselves, fail2ban on SSH
+# - security updates installed by themselves - never rebooting or
+#   restarting Docker - and fail2ban on SSH
 # - Docker Engine and the Compose plugin, from Docker's own apt repository
 # - a 2 GB swap file: overflow for Postgres and the api on a small box
 #   (512 MiB swaps even at idle), and for building the backup image
@@ -52,12 +53,29 @@ write_files:
     content: |
       APT::Periodic::Update-Package-Lists "1";
       APT::Periodic::Unattended-Upgrade "1";
+  # Security updates never reboot the server by themselves - Ubuntu's own
+  # default, said here so it stays that way. A kernel update waits for a
+  # reboot timed around the games (README, "Rebooting").
+  - path: /etc/apt/apt.conf.d/52cchess-no-reboot
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+  # Nor do they restart Docker, which would stop every container with it:
+  # needrestart restarts the services an update's libraries leave out of
+  # date, and Ubuntu's own list already skips docker - said here so it stays
+  # that way, containerd too. Docker's own packages aren't upgraded by
+  # unattended-upgrades at all (its repository isn't an origin it uses).
+  - path: /etc/needrestart/conf.d/50-cchess.conf
+    content: |
+      $nrconf{override_rc}{qr(^docker)} = 0;
+      $nrconf{override_rc}{qr(^containerd)} = 0;
   # "ip": a port published without an address of its own listens on the
-  # box only (127.0.0.1), never on the internet - see the header. And
-  # Docker's own log rotation, for anything run outside compose.yaml.
+  # box only (127.0.0.1), never on the internet - see the header. Docker's
+  # own log rotation, for anything run outside compose.yaml. And
+  # "live-restore": the containers keep running while Docker itself
+  # restarts - an upgrade of it, say - rather than stopping with it.
   - path: /etc/docker/daemon.json
     content: |
-      { "ip": "127.0.0.1", "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "5" } }
+      { "ip": "127.0.0.1", "live-restore": true, "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "5" } }
 
 runcmd:
   - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
