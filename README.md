@@ -58,7 +58,9 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
 | `.env.example` | Every setting. The real `.env` lives only on the server |
 | `backup/` | The backup image: `backup.sh` (pg_dump, retention, optional rclone upload), `restore.sh`, `restore-drill.sh` (a monthly test restore) |
 | `provision/cloud-init.yaml` | A fresh Ubuntu 24.04 VPS: deploy user, firewall, updates, Docker |
-| `scripts/gen-secrets.sh` | Makes `.env`, generating the DB password and JWT secrets you've left blank |
+| `secrets/` | Each server's `.env`, encrypted with SOPS - on your machine only, git-ignored |
+| `scripts/secrets.sh` | Makes, imports, edits and shows those files |
+| `scripts/gen-secrets.sh` | Fills in a `.env`'s DB password and JWT secrets left blank (`secrets.sh new` uses it) |
 | `scripts/deploy.sh` | Builds the api image for the server's CPU, ships it over ssh, and restarts once no live game is being played |
 | `scripts/maintenance.sh` | Maintenance on a server: announce it, wait for the live games to finish, end it |
 | `docs/reports/` | Dated reports: what was tested, measured and found, as of each one's date |
@@ -72,17 +74,16 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
    `provision/cloud-init.yaml` as its user data, with your SSH public key in
    place of the placeholder.
 2. Point the API's DNS name (an `A`/`AAAA` record) at the server's IP.
-3. Make the server's `.env` on the server, so its secrets never leave it.
-   `gen-secrets.sh` fills in the database password and JWT secrets with
-   random values, keeping any you've set yourself. Then set `DOMAIN` and
-   `CADDY_TLS` (your email, for Let's Encrypt), and the `RCLONE_*` lines to
-   keep backups off the box too:
+3. Make the server's `.env`, kept encrypted on your machine (see
+   [Secrets](#secrets)): the database password and JWT secrets are
+   generated. Then set `DOMAIN` and `CADDY_TLS` (your email, for Let's
+   Encrypt), and the `RCLONE_*` lines to keep backups off the box too:
    ```sh
-   rsync -a --relative .env.example scripts/gen-secrets.sh deploy@<server>:/opt/cchess/
-   ssh deploy@<server> /opt/cchess/scripts/gen-secrets.sh
-   ssh deploy@<server> nano /opt/cchess/.env
+   scripts/secrets.sh new <server>
+   scripts/secrets.sh edit <server>
    ```
-4. From your machine: `scripts/deploy.sh deploy@<server>`.
+4. From your machine: `scripts/deploy.sh deploy@<server>`. It sends the
+   `.env` too.
 5. Build the app with `EXPO_PUBLIC_SERVER_URL=https://<domain>` (see
    cchess's `src/network/env.ts`).
 
@@ -176,6 +177,43 @@ scripts/maintenance.sh deploy@api.example.com drain && ssh deploy@api.example.co
 
 Everything comes back up on its own after the reboot, with no maintenance
 set.
+
+## Secrets
+
+Each server's `.env` is kept on your machine in `secrets/<server>.env`,
+encrypted with [SOPS](https://github.com/getsops/sops): the names stay
+readable, but every value and comment is ciphertext. The folder is
+git-ignored all the same - secrets aren't committed, encrypted or not - so
+back it up yourself, along with your key. An
+[age](https://github.com/FiloSottile/age) key opens the files: your private
+key stays on your machine (`~/Library/Application Support/sops/age/keys.txt`
+on a Mac, `~/.config/sops/age/keys.txt` on Linux), and `secrets.sh`
+encrypts for its public half, worked out from it - so there's no
+`.sops.yaml` to keep. Set `SOPS_AGE_RECIPIENTS` (public keys,
+comma-separated) when someone else should open them too. Lose the private
+key and the files can't be opened, so keep a copy somewhere safe, such as a
+password manager.
+
+```sh
+brew install sops age                                  # once
+age-keygen -o ~/Library/Application\ Support/sops/age/keys.txt   # once: your key
+
+scripts/secrets.sh new <server>               # a new server's: secrets generated, from .env.example
+scripts/secrets.sh import <ssh host> <server> # an existing server's own .env
+scripts/secrets.sh edit <server>              # change it: opens decrypted in $EDITOR
+scripts/secrets.sh show <server>              # print it
+sops rotate -i --add-age <public key> secrets/<server>.env   # let another key open one
+```
+
+`deploy.sh deploy@api.example.com` decrypts `secrets/api.example.com.env`
+on your machine and sends it over ssh as the server's `.env`
+(`SECRETS_FILE` names another file). The plain file exists only on the
+server, readable by its deploy user alone. With no file for the server,
+the deploy leaves the server's own `.env` as it is.
+
+`DB_PASSWORD` is only read when Postgres first creates its data volume.
+Changing it later breaks the api's connection to the database, unless the
+database user's password is changed to match (`ALTER USER ... PASSWORD`).
 
 ## Backups
 

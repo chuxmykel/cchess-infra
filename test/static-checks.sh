@@ -35,7 +35,7 @@ print("ok: " + ", ".join(sorted(published)))
 
 echo "== shellcheck"
 docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 \
-  backup/backup.sh backup/restore.sh backup/restore-drill.sh scripts/gen-secrets.sh scripts/deploy.sh scripts/maintenance.sh \
+  backup/backup.sh backup/restore.sh backup/restore-drill.sh scripts/gen-secrets.sh scripts/deploy.sh scripts/maintenance.sh scripts/secrets.sh \
   test/run-local.sh test/run-remote.sh test/static-checks.sh test/e2e-stack.sh
 
 echo "== cloud-init schema"

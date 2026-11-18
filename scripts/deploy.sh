@@ -11,6 +11,10 @@
 # however long that takes (scripts/maintenance.sh drain). FORCE=1 restarts
 # at once, games or not, for an emergency.
 #
+# The server's .env comes from secrets/<host>.env (scripts/secrets.sh),
+# decrypted here and sent over ssh - $SECRETS_FILE names another. With
+# neither, the server keeps the .env it has.
+#
 # The server keeps the image just sent and the newest $KEEP_IMAGES before it
 # (3 by default) to roll back to, each tagged by commit, and runs the one
 # tagged cchess-be:current. To roll back:
@@ -23,6 +27,17 @@ be_dir=${CCHESS_BE_DIR:-$(dirname "$0")/../../cchess-be}
 remote_dir=${REMOTE_DIR:-/opt/cchess}
 keep_images=${KEEP_IMAGES:-3}
 infra_dir=$(cd "$(dirname "$0")/.." && pwd)
+secrets_file=${SECRETS_FILE:-$infra_dir/secrets/${host#*@}.env}
+
+# Decrypted before anything else, so a missing key stops the deploy before
+# it's begun.
+env_text=
+if [ -f "$secrets_file" ]; then
+  env_text=$(sops decrypt --input-type dotenv --output-type dotenv "$secrets_file")
+elif [ -n "${SECRETS_FILE:-}" ]; then
+  echo "no such secrets file: $secrets_file" >&2
+  exit 1
+fi
 
 rev=$(git -C "$be_dir" rev-parse --short HEAD)
 # The image is built from the working tree, so changes not committed would
@@ -66,6 +81,13 @@ on_exit() {
 trap on_exit EXIT
 
 echo "updating the stack in $remote_dir"
+if [ -n "$env_text" ]; then
+  # shellcheck disable=SC2029 # $remote_dir is meant to expand here
+  printf '%s\n' "$env_text" | ssh "$host" "umask 077 && cat > $remote_dir/.env.new && mv $remote_dir/.env.new $remote_dir/.env"
+  echo "sent $(basename "$secrets_file") as the server's .env"
+else
+  echo "no $(basename "$secrets_file"): the server keeps its own .env"
+fi
 # .env stays on the server, never sent from here.
 # Relative paths from inside the repo: macOS's openrsync ignores the "/./"
 # marker GNU rsync uses to cut a --relative path short.

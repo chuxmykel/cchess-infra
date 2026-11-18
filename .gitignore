@@ -2,3 +2,7 @@
 node_modules/
 test/.state/
 .DS_Store
+# Each server's .env, encrypted (scripts/secrets.sh) - kept out of git all the same.
+secrets/
+# SOPS settings, if you keep any: secrets.sh needs none.
+.sops.yaml
