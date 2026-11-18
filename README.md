@@ -6,7 +6,7 @@
 
 Hosting for [cchess-be](https://github.com/chuxmykel/cchess-be), the backend
 of the [cchess](https://github.com/chuxmykel/cchess) chess app: one VPS,
-Docker Compose, automatic HTTPS and nightly backups, for about $4-5 a month.
+Docker Compose, automatic HTTPS and nightly backups.
 
 ```
 internet ──443/80──▶ caddy ──▶ api (cchess-be) ──▶ postgres
@@ -16,13 +16,14 @@ internet ──443/80──▶ caddy ──▶ api (cchess-be) ──▶ postgre
 
 **At a glance**
 
-- **One box, by design.** The backend keeps games, clocks and the seek
-  queue in process memory, and its optional worker sharding goes over
-  Node's own cluster IPC, so it runs as one process on one host
-  (cchess-be's [CLAUDE.md](https://github.com/chuxmykel/cchess-be/blob/develop/CLAUDE.md)
-  has the details).
-- **Small.** It's tested on a replica of DigitalOcean's $4 droplet
-  (1 vCPU, 512 MiB): 200 simultaneous games under a no-thinking-time stress
+- **One server, for now.** The backend keeps each live game's clock and
+  the seek queue in process memory, and shares work between its workers
+  over Node's cluster IPC, which stays on one machine. So the api runs on
+  one host. Spreading it across several would take backend changes
+  (cchess-be's README, under Known limitations), and one small server
+  holds a few hundred games at once.
+- **Small.** It's tested on a replica of DigitalOcean's smallest
+  droplet (1 vCPU, 512 MiB): 200 simultaneous games under a no-thinking-time stress
   test, with a median move of 0.6 s.
 - **Tested end to end.** A local Docker run and a deployed server both get
   the same smoke tests through real TLS: sign-up, an authenticated
@@ -49,12 +50,12 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
 
 | File | What it does |
 |---|---|
-| `compose.yaml` | The production stack: `caddy`, `postgres`, `migrate` (one-shot), `api`, `backup`, and `redis` (only under the `cluster` profile) |
+| `compose.yaml` | The production stack: `caddy`, `postgres`, `migrate` (applies pending migrations on every deploy, then exits), `api`, `backup`, and `redis` (only under the `cluster` profile) |
 | `caddy/Caddyfile` | HTTPS for `$DOMAIN` (Let's Encrypt, or Caddy's own CA when `CADDY_TLS=internal`), proxying to the api, WebSockets included |
 | `.env.example` | Every setting. The real `.env` lives only on the server |
 | `backup/` | The backup image: `backup.sh` (pg_dump, retention, optional rclone upload), `restore.sh` |
 | `provision/cloud-init.yaml` | A fresh Ubuntu 24.04 VPS: deploy user, firewall, updates, Docker |
-| `scripts/gen-secrets.sh` | Makes `.env`, generating the DB password and JWT secrets |
+| `scripts/gen-secrets.sh` | Makes `.env`, generating the DB password and JWT secrets you've left blank |
 | `scripts/deploy.sh` | Builds the api image for the server's CPU, ships it over ssh, restarts |
 | `docs/reports/` | Dated reports: what was tested, measured and found, as of each one's date |
 | `test/` | `run-local.sh` runs the whole stack in Docker here and smoke-tests it; `run-remote.sh` smoke-tests a deployed server; `static-checks.sh`; `e2e-stack.sh`, the app's e2e backend |
@@ -67,9 +68,11 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
    `provision/cloud-init.yaml` as its user data, with your SSH public key in
    place of the placeholder.
 2. Point the API's DNS name (an `A`/`AAAA` record) at the server's IP.
-3. Make the server's `.env`, then set `DOMAIN` and `CADDY_TLS` (your email,
-   for Let's Encrypt) in it, and the `RCLONE_*` lines to keep backups off
-   the box too:
+3. Make the server's `.env` on the server, so its secrets never leave it.
+   `gen-secrets.sh` fills in the database password and JWT secrets with
+   random values, keeping any you've set yourself. Then set `DOMAIN` and
+   `CADDY_TLS` (your email, for Let's Encrypt), and the `RCLONE_*` lines to
+   keep backups off the box too:
    ```sh
    rsync -a --relative .env.example scripts/gen-secrets.sh deploy@<server>:/opt/cchess/
    ssh deploy@<server> /opt/cchess/scripts/gen-secrets.sh
@@ -118,12 +121,22 @@ Migrations only go forward, so a rollback across one needs
 newest `BACKUP_KEEP` dumps in the `backups` volume and copies each one to
 `RCLONE_REMOTE` when that's set.
 
+Backups run while the api is up: `pg_dump` reads a consistent snapshot
+without blocking anyone.
+
 ```sh
 docker compose exec backup backup.sh                 # one now
 docker compose exec backup ls -l /backups            # what's there
-docker compose stop api                              # restore with the api stopped:
-docker compose exec backup restore.sh latest         # its in-memory games would
-docker compose start api                             # write over what's restored
+```
+
+A restore is different. The api holds the games in progress in memory, and
+would go on writing their moves and clocks over what's restored, so stop it
+first:
+
+```sh
+docker compose stop api
+docker compose exec backup restore.sh latest
+docker compose start api
 ```
 
 ## Testing
@@ -178,8 +191,8 @@ test/e2e-stack.sh down    # stop it, and throw its database away
   simulator reaches it there, the emulator as `10.0.2.2`. Caddy isn't
   started: a simulator doesn't trust its local CA, and an Android app trusts
   no CA a user added. Nor are backups.
-- A one-shot `seed` service, after `migrate` and before the api, runs
-  cchess-be's seeders with `SEED_E2E=1`: the bots and the e2e accounts and
+- A `seed` service, run on each `up` after `migrate` and before the api,
+  runs cchess-be's seeders with `SEED_E2E=1`: the bots and the e2e accounts and
   games (cchess-be's README, under Testing). It's built from the Dockerfile's
   `build` stage, which has the dev dependencies the seeders' CLI needs.
 - Its own project name (`cchess-e2e`) and `test/e2e.env`, so it never
@@ -194,7 +207,3 @@ CI brings it up and checks it on every push (the `E2E stack` job).
 - [cchess](https://github.com/chuxmykel/cchess): the iOS and Android app
 - [cchess-be](https://github.com/chuxmykel/cchess-be): the server this
   deploys
-
-## License
-
-No license has been chosen yet, so all rights are reserved.
