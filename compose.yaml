@@ -111,6 +111,7 @@ services:
       PGDATABASE: ${DB_NAME}
       BACKUP_HOUR: ${BACKUP_HOUR:-3}
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      RESTORE_DRILL_DAY: ${RESTORE_DRILL_DAY-1}
       RCLONE_REMOTE: ${RCLONE_REMOTE:-}
     env_file: ${ENV_FILE:-.env}
     volumes:
@@ -120,7 +121,7 @@ services:
         condition: service_healthy
     logging: *logging
 
-  # Only for CLUSTER_WORKERS > 1 (cchess-be's README): start with
+  # Only for CLUSTER_WORKERS > 1 (cchess-be's docs/performance.md): start with
   # `docker compose --profile cluster up -d`, and set REDIS_HOST=redis.
   redis:
     image: valkey/valkey:8-alpine

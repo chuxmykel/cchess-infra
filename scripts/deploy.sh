@@ -4,6 +4,17 @@
 #
 #   scripts/deploy.sh deploy@api.example.com
 #
+# The restart waits until no live game is being played: maintenance is
+# announced to begin $NOTICE_MINUTES (5) on - the app's banner shows when,
+# and no new live game starts from the announcement - and the deploy goes
+# on once that time has come and the games in progress have finished,
+# however long that takes (scripts/maintenance.sh drain). FORCE=1 restarts
+# at once, games or not, for an emergency.
+#
+# The server's .env comes from secrets/<host>.env (scripts/secrets.sh),
+# decrypted here and sent over ssh - $SECRETS_FILE names another. With
+# neither, the server keeps the .env it has.
+#
 # The server keeps the image just sent and the newest $KEEP_IMAGES before it
 # (3 by default) to roll back to, each tagged by commit, and runs the one
 # tagged cchess-be:current. To roll back:
@@ -16,6 +27,17 @@ be_dir=${CCHESS_BE_DIR:-$(dirname "$0")/../../cchess-be}
 remote_dir=${REMOTE_DIR:-/opt/cchess}
 keep_images=${KEEP_IMAGES:-3}
 infra_dir=$(cd "$(dirname "$0")/.." && pwd)
+secrets_file=${SECRETS_FILE:-$infra_dir/secrets/${host#*@}.env}
+
+# Decrypted before anything else, so a missing key stops the deploy before
+# it's begun.
+env_text=
+if [ -f "$secrets_file" ]; then
+  env_text=$(sops decrypt --input-type dotenv --output-type dotenv "$secrets_file")
+elif [ -n "${SECRETS_FILE:-}" ]; then
+  echo "no such secrets file: $secrets_file" >&2
+  exit 1
+fi
 
 rev=$(git -C "$be_dir" rev-parse --short HEAD)
 # The image is built from the working tree, so changes not committed would
@@ -41,7 +63,31 @@ docker buildx build --platform "$platform" --tag "cchess-be:$rev" --load "$be_di
 echo "sending the image to $host"
 docker save "cchess-be:$rev" | gzip | ssh "$host" 'gunzip | docker load'
 
+drained=
+if [ "${FORCE:-}" = 1 ]; then
+  echo "FORCE=1: restarting without waiting for live games"
+else
+  "$infra_dir/scripts/maintenance.sh" "$host" drain
+  drained=1
+fi
+# Maintenance, once started, stays on until a deploy completes it: a failed
+# one leaves it on, new games still refused, for the next to finish.
+on_exit() {
+  code=$?
+  if [ "$code" != 0 ] && [ -n "$drained" ]; then
+    echo "the deploy failed - maintenance is still on, so no new live games start. Fix it and deploy again, or end it: scripts/maintenance.sh $host end" >&2
+  fi
+}
+trap on_exit EXIT
+
 echo "updating the stack in $remote_dir"
+if [ -n "$env_text" ]; then
+  # shellcheck disable=SC2029 # $remote_dir is meant to expand here
+  printf '%s\n' "$env_text" | ssh "$host" "umask 077 && cat > $remote_dir/.env.new && mv $remote_dir/.env.new $remote_dir/.env"
+  echo "sent $(basename "$secrets_file") as the server's .env"
+else
+  echo "no $(basename "$secrets_file"): the server keeps its own .env"
+fi
 # .env stays on the server, never sent from here.
 # Relative paths from inside the repo: macOS's openrsync ignores the "/./"
 # marker GNU rsync uses to cut a --relative path short.
@@ -63,4 +109,7 @@ ssh "$host" "docker image ls cchess-be --format '{{.CreatedAt}}|{{.Tag}}' |
     grep -v -e '|current\$' -e '|$rev\$' | sort -r | tail -n +$((keep_images + 1)) | cut -d'|' -f2 |
     while read -r tag; do docker image rm \"cchess-be:\$tag\" >/dev/null && echo \"removed cchess-be:\$tag\"; done
   docker image prune -f >/dev/null && docker builder prune -f >/dev/null"
+# Done: a restarted api has forgotten it, but one this deploy didn't need to
+# restart would go on refusing new live games.
+"$infra_dir/scripts/maintenance.sh" "$host" end >/dev/null
 echo "deployed cchess-be $rev"
