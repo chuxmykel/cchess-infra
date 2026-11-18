@@ -14,5 +14,8 @@
 {$DOMAIN} {
 	tls {$CADDY_TLS}
 	encode zstd gzip
+	# The api's own controls (scripts/maintenance.sh), used from inside its
+	# container. It refuses them from anywhere else too.
+	respond /internal/* 404
 	reverse_proxy api:3000
 }

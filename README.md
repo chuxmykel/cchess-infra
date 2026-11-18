@@ -25,6 +25,8 @@ internet ──443/80──▶ caddy ──▶ api (cchess-be) ──▶ postgre
 - **Small.** It's tested on a replica of DigitalOcean's smallest
   droplet (1 vCPU, 512 MiB): 200 simultaneous games under a no-thinking-time stress
   test, with a median move of 0.6 s.
+- **Deploys between games.** A deploy announces maintenance, which stops
+  new live games, and restarts once the ones in progress have finished.
 - **Tested end to end.** A local Docker run and a deployed server both get
   the same smoke tests through real TLS: sign-up, an authenticated
   WebSocket, restarts, and a backup-restore round trip.
@@ -56,7 +58,8 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
 | `backup/` | The backup image: `backup.sh` (pg_dump, retention, optional rclone upload), `restore.sh` |
 | `provision/cloud-init.yaml` | A fresh Ubuntu 24.04 VPS: deploy user, firewall, updates, Docker |
 | `scripts/gen-secrets.sh` | Makes `.env`, generating the DB password and JWT secrets you've left blank |
-| `scripts/deploy.sh` | Builds the api image for the server's CPU, ships it over ssh, restarts |
+| `scripts/deploy.sh` | Builds the api image for the server's CPU, ships it over ssh, and restarts once no live game is being played |
+| `scripts/maintenance.sh` | Maintenance on a server: announce it, wait for the live games to finish, end it |
 | `docs/reports/` | Dated reports: what was tested, measured and found, as of each one's date |
 | `test/` | `run-local.sh` runs the whole stack in Docker here and smoke-tests it; `run-remote.sh` smoke-tests a deployed server; `static-checks.sh`; `e2e-stack.sh`, the app's e2e backend |
 | `compose.e2e.yaml` | The app's e2e backend (with `compose.local.yaml`): the api seeded and published on 127.0.0.1, no Caddy |
@@ -94,19 +97,18 @@ The script:
    server's architecture. It refuses uncommitted changes, which would ship
    under a commit that doesn't hold them; `ALLOW_DIRTY=1` ships them to a
    test server anyway, tagged `<commit>-dirty`;
-2. loads it there as `cchess-be:<commit>`, and retags that as
-   `cchess-be:current`;
-3. copies `compose.yaml`, `caddy/` and `backup/` across, runs
+2. loads it there as `cchess-be:<commit>`;
+3. waits for the live games to finish (below);
+4. retags the image as `cchess-be:current`, copies `compose.yaml`,
+   `caddy/` and `backup/` across, runs
    `docker compose up -d --wait`, and has Caddy reload its config;
-4. removes all but the image just deployed and the 3 newest before it
+5. removes all but the image just deployed and the 3 newest before it
    (`KEEP_IMAGES`), so a small disk doesn't fill up.
 
-Migrations run first, in `migrate`, before the api starts. A deploy restarts
-the api, so games in progress pause for the few seconds it's down. The api
-saves the moves it's handling before it exits, and clients reconnect and
-rejoin.
+Migrations run first, in `migrate`, before the api starts.
 
-**Rolling back:** retag an earlier commit's image and start it again:
+**Rolling back:** retag an earlier commit's image and start it again, after
+`scripts/maintenance.sh <host> drain` unless it can't wait:
 
 ```sh
 ssh deploy@api.example.com 'docker tag cchess-be:<commit> cchess-be:current && cd /opt/cchess && docker compose up -d --wait'
@@ -114,6 +116,49 @@ ssh deploy@api.example.com 'docker tag cchess-be:<commit> cchess-be:current && c
 
 Migrations only go forward, so a rollback across one needs
 `migration:revert` first (cchess-be's README, under Commands).
+
+### Waiting for the games
+
+A restart takes the api down for a few seconds, and a live game's clock
+keeps running through it, so the deploy waits for a moment with no live
+game on (`scripts/maintenance.sh drain`):
+
+1. It announces maintenance, to begin `NOTICE_MINUTES` on (5 by default).
+   The app shows a banner with that time in games and while seeking, back
+   a minute after it's dismissed.
+2. From the announcement, no new live game starts: no seeks, live
+   challenges or rematches. Players trying are told why, and seeks already
+   waiting are dropped. Daily games start and carry on throughout, since a
+   restart loses none of them.
+3. Once that time has come and the live games in progress have finished,
+   however long that takes, the deploy goes on. The new api starts with no maintenance, so new games
+   start again at once.
+
+Maintenance, once announced, stays on until a deploy completes it. Stopping
+the wait with Ctrl-C, or a deploy failing after it, leaves it on, new live
+games still refused: deploy again to finish, or end it by hand.
+
+```sh
+NOTICE_MINUTES=15 scripts/deploy.sh deploy@api.example.com   # more notice
+FORCE=1 scripts/deploy.sh deploy@api.example.com             # an emergency: restart at once, games or not
+```
+
+With `FORCE=1`, the api saves the moves it's handling before it exits, and
+clients reconnect and rejoin, but the player to move loses the seconds it
+was down.
+
+`scripts/maintenance.sh` does the same on its own, for anything else that
+restarts the api:
+
+```sh
+scripts/maintenance.sh deploy@api.example.com status     # whether it's on, when it begins, the live games left
+scripts/maintenance.sh deploy@api.example.com start 15   # announce it, to begin in 15 minutes
+scripts/maintenance.sh deploy@api.example.com drain 15   # ...and wait for that and the live games
+scripts/maintenance.sh deploy@api.example.com end        # end it
+```
+
+It talks to the api from inside its container, the only place the api
+answers it; Caddy refuses `/internal/*` from the internet as well.
 
 ## Backups
 
@@ -155,6 +200,8 @@ The tests check:
 - a guest sign-up, which needs the database and migrations;
 - an authenticated Socket.IO WebSocket through Caddy;
 - that nothing but Caddy publishes a port;
+- that the maintenance controls answer inside the api's container and
+  not through Caddy, and that maintenance announced is shown to the app;
 - that data survives an api restart;
 - a backup and restore round trip, and backup retention;
 - that the api stops within its grace period.
@@ -166,7 +213,7 @@ test/run-remote.sh <ssh host> https://<domain>                       # the read-
 ALLOW_DESTRUCTIVE=1 test/run-remote.sh cchess-do-sim https://192.168.1.181   # all of them
 ```
 
-Without `ALLOW_DESTRUCTIVE=1` only the first five run. With it, the api is
+Without `ALLOW_DESTRUCTIVE=1` only the read-only checks run. With it, the api is
 restarted and stopped, and a backup is restored over the database: never
 on a server with real players. When the server's `CADDY_TLS` is
 `internal`, its CA is fetched and trusted for the run.

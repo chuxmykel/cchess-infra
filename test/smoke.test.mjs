@@ -7,6 +7,7 @@
 // over the database run only with ALLOW_DESTRUCTIVE=1: never on one with
 // real players.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 
@@ -134,6 +135,34 @@ test('publishes no port but Caddy\'s', () => {
   for (const service of ['postgres', 'api', 'backup']) {
     assert.deepEqual(published[service], [], `${service} publishes a port`);
   }
+});
+
+/** scripts/maintenance.sh's request, made the same way: from inside the
+ * api's container. */
+function maintenanceRequest(method, body = '') {
+  const script = readFileSync('scripts/maintenance-request.js', 'utf8');
+  const out = compose('exec', '-T', '-e', `METHOD=${method}`, '-e', `BODY=${body}`, 'api', 'node', '-e', script);
+  return out.trim() ? JSON.parse(out) : null;
+}
+
+test('keeps the maintenance controls off the internet', async () => {
+  const res = await fetch(`${BASE_URL}/internal/maintenance`);
+  assert.equal(res.status, 404);
+  // ...and inside the container they answer.
+  assert.equal(typeof maintenanceRequest('GET').liveGames, 'number');
+});
+
+// Destructive on a server: its players would be shown the banner.
+test('announces maintenance, shown to the app, and ends it', destructive, async () => {
+  const started = maintenanceRequest('PUT', '{"minutes":5}');
+  assert.ok(started.startsAt);
+  assert.ok(started.secondsToStart > 4 * 60, JSON.stringify(started));
+  const shown = await (await fetch(`${BASE_URL}/maintenance`)).json();
+  assert.equal(shown.startsAt, started.startsAt);
+
+  maintenanceRequest('DELETE');
+  const ended = await (await fetch(`${BASE_URL}/maintenance`)).json();
+  assert.equal(ended.startsAt, null);
 });
 
 let survivor;
