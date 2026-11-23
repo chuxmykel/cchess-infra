@@ -121,6 +121,23 @@ services:
         condition: service_healthy
     logging: *logging
 
+  # Computer opponents, so a reviewer or tester always finds a game - each
+  # a labelled account, seeking by HOUSE_BOTS (housebots/run.sh). Only with
+  # COMPOSE_PROFILES=bots in .env; deploy.sh copies the opponent in.
+  housebots:
+    build: ./housebots
+    image: cchess-housebots:local
+    restart: unless-stopped
+    profiles: [bots]
+    environment:
+      HOUSE_BOTS: ${HOUSE_BOTS:-}
+      HOUSE_BOT_PASSWORD: ${HOUSE_BOT_PASSWORD:-}
+      HOUSE_BOT_LEVEL: ${HOUSE_BOT_LEVEL:-medium}
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *logging
+
   # Only for CLUSTER_WORKERS > 1 (cchess-be's docs/performance.md): start with
   # `docker compose --profile cluster up -d`, and set REDIS_HOST=redis.
   redis:
