@@ -123,10 +123,16 @@ the first store build:
    reach of a new player's 1500, so `hard` is the safer choice there) and
    `HOUSE_BOT_PASSWORD` in the `.env`, and deploy.
 
-5. **Monitoring:** run `scripts/check.sh api.chux.dev` from a cron job, or
+5. **Puzzles:** fill the puzzle pool from lichess's database (CC0) - a few
+   minutes, streamed from lichess and kept to 50,000 puzzles spread over the
+   ratings; run again to update them:
+   ```sh
+   docker compose exec api node dist/puzzles/import/import-puzzles.js --limit 50000
+   ```
+6. **Monitoring:** run `scripts/check.sh api.chux.dev` from a cron job, or
    point an uptime service at `/health` - with the certificate's expiry, if
    it checks it.
-6. **The store forms' URLs:** the privacy policy is
+7. **The store forms' URLs:** the privacy policy is
    `https://api.chux.dev/legal/privacy`, the terms `/legal/terms`, and the
    account-deletion page Google asks for `/account/delete`.
 
