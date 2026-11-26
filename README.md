@@ -106,17 +106,23 @@ the first store build:
    `ANDROID_CERT_SHA256` (Play Console > App integrity: the app signing
    key's and the upload key's), so email links open the app.
 4. **House bots,** so a reviewer or tester always finds a game: make each
-   account (any password - one for them all), then label it a bot:
+   account (any password - one for them all), give it a name, then mark it a
+   bot on the server - the api never pairs two bots, and the app tags them:
    ```sh
    curl -s https://api.chux.dev/auth/register -H 'Content-Type: application/json' \
      -d '{"username":"housebot_blitz","email":"housebot_blitz@chux.dev","password":"<pw>","acceptTerms":true}' |
      jq -r .accessToken > /tmp/t
    curl -s -X PATCH https://api.chux.dev/users/me -H "Authorization: Bearer $(cat /tmp/t)" \
      -H 'Content-Type: application/json' -d '{"displayName":"House bot (blitz)","bio":"A computer opponent."}'
+   docker compose exec api curl -s -X POST localhost:3000/internal/users/housebot_blitz/bot
    ```
-   Then `COMPOSE_PROFILES=bots`, `HOUSE_BOTS` (one `username:time:mode` each:
-   rated ones for accounts, a casual one for guests) and
+   Then `COMPOSE_PROFILES=bots`, `HOUSE_BOTS` (one `username:time:mode:level`
+   each: rated ones for accounts, a casual one for guests - as many as you
+   like at a time control; the level `easy`, `medium` or `hard`,
+   `HOUSE_BOT_LEVEL` when left out - a rated bot's rating has to stay within
+   reach of a new player's 1500, so `hard` is the safer choice there) and
    `HOUSE_BOT_PASSWORD` in the `.env`, and deploy.
+
 5. **Monitoring:** run `scripts/check.sh api.chux.dev` from a cron job, or
    point an uptime service at `/health` - with the certificate's expiry, if
    it checks it.
