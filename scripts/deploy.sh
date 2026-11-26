@@ -24,6 +24,7 @@ set -eu
 
 host=${1:?usage: deploy.sh <ssh host>}
 be_dir=${CCHESS_BE_DIR:-$(dirname "$0")/../../cchess-be}
+app_dir=${CCHESS_DIR:-$(dirname "$0")/../../cchess}
 remote_dir=${REMOTE_DIR:-/opt/cchess}
 keep_images=${KEEP_IMAGES:-3}
 infra_dir=$(cd "$(dirname "$0")/.." && pwd)
@@ -91,7 +92,10 @@ fi
 # .env stays on the server, never sent from here.
 # Relative paths from inside the repo: macOS's openrsync ignores the "/./"
 # marker GNU rsync uses to cut a --relative path short.
-(cd "$infra_dir" && rsync -a --relative compose.yaml caddy backup "$host:$remote_dir/")
+# The house bots' image is built on the server, like the backup's, from the
+# scripted opponent in a cchess checkout - copied in here first.
+cp "$app_dir/scripts/opponent.js" "$app_dir/scripts/opponent-ai.js" "$infra_dir/housebots/"
+(cd "$infra_dir" && rsync -a --relative compose.yaml caddy backup housebots "$host:$remote_dir/")
 # The Caddyfile is mounted, not built in, so compose sees nothing to restart
 # when it changes: Caddy is told to reload it instead, without dropping
 # connections (compose.yaml mounts its folder, so the new file is seen).

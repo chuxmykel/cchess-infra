@@ -53,9 +53,11 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
 
 | File | What it does |
 |---|---|
-| `compose.yaml` | The production stack: `caddy`, `postgres`, `migrate` (applies pending migrations on every deploy, then exits), `api`, `backup`, and `redis` (only under the `cluster` profile) |
+| `compose.yaml` | The production stack: `caddy`, `postgres`, `migrate` (applies pending migrations on every deploy, then exits), `api`, `backup`, `housebots` (only under the `bots` profile) and `redis` (only under the `cluster` profile) |
 | `caddy/Caddyfile` | HTTPS for `$DOMAIN` (Let's Encrypt, or Caddy's own CA when `CADDY_TLS=internal`), proxying to the api, WebSockets included |
 | `.env.example` | Every setting. The real `.env` lives only on the server |
+| `housebots/` | The house bots' image: cchess's scripted opponent (copied in by `deploy.sh`), one per `HOUSE_BOTS` account |
+| `scripts/check.sh` | Whether the api answers and its certificate has 14+ days left - for a cron job or uptime service |
 | `backup/` | The backup image: `backup.sh` (pg_dump, retention, optional rclone upload), `restore.sh`, `restore-drill.sh` (a monthly test restore) |
 | `provision/cloud-init.yaml` | A fresh Ubuntu 24.04 VPS: deploy user, firewall, updates, Docker |
 | `secrets/` | Each server's `.env`, encrypted with SOPS - on your machine only, git-ignored |
@@ -86,6 +88,47 @@ To put it on a server, see [Setting up a server](#setting-up-a-server).
    `.env` too.
 5. Build the app with `EXPO_PUBLIC_SERVER_URL=https://<domain>` (see
    cchess's `src/network/env.ts`).
+
+### Going live for the app stores
+
+The app is built against `https://api.chux.dev` (cchess's `eas.json`). Before
+the first store build:
+
+1. **DNS:** chux.dev's DNS is on Netlify: add an `A` record (and `AAAA`, with
+   IPv6) for `api` pointing at the server. Caddy gets the certificate on its
+   first start. Set `DOMAIN=api.chux.dev` and `PUBLIC_URL=https://api.chux.dev`.
+2. **Email:** add `mail.chux.dev` in Resend and the SPF, DKIM and DMARC
+   records it gives to Netlify DNS; then `RESEND_API_KEY` and
+   `MAIL_FROM=cchess <no-reply@mail.chux.dev>`. For `support@chux.dev`, add
+   chux.dev to a forwarder (ImprovMX's free plan works with any DNS) and its
+   `MX` records - reports and account-deletion requests arrive there.
+3. **App links:** once the apps exist, `APPLE_TEAM_ID` and
+   `ANDROID_CERT_SHA256` (Play Console > App integrity: the app signing
+   key's and the upload key's), so email links open the app.
+4. **House bots,** so a reviewer or tester always finds a game: make each
+   account (any password - one for them all), give it a name, then mark it a
+   bot on the server - the api never pairs two bots, and the app tags them:
+   ```sh
+   curl -s https://api.chux.dev/auth/register -H 'Content-Type: application/json' \
+     -d '{"username":"housebot_blitz","email":"housebot_blitz@chux.dev","password":"<pw>","acceptTerms":true}' |
+     jq -r .accessToken > /tmp/t
+   curl -s -X PATCH https://api.chux.dev/users/me -H "Authorization: Bearer $(cat /tmp/t)" \
+     -H 'Content-Type: application/json' -d '{"displayName":"House bot (blitz)","bio":"A computer opponent."}'
+   docker compose exec api curl -s -X POST localhost:3000/internal/users/housebot_blitz/bot
+   ```
+   Then `COMPOSE_PROFILES=bots`, `HOUSE_BOTS` (one `username:time:mode:level`
+   each: rated ones for accounts, a casual one for guests - as many as you
+   like at a time control; the level `easy`, `medium` or `hard`,
+   `HOUSE_BOT_LEVEL` when left out - a rated bot's rating has to stay within
+   reach of a new player's 1500, so `hard` is the safer choice there) and
+   `HOUSE_BOT_PASSWORD` in the `.env`, and deploy.
+
+5. **Monitoring:** run `scripts/check.sh api.chux.dev` from a cron job, or
+   point an uptime service at `/health` - with the certificate's expiry, if
+   it checks it.
+6. **The store forms' URLs:** the privacy policy is
+   `https://api.chux.dev/legal/privacy`, the terms `/legal/terms`, and the
+   account-deletion page Google asks for `/account/delete`.
 
 ## Deploying
 

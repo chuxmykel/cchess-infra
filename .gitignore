@@ -4,3 +4,7 @@ test/.state/
 .DS_Store
 secrets/
 .sops.yaml
+# Copied in from a cchess checkout by scripts/deploy.sh: the scripted
+# opponent's two files, never kept here.
+housebots/opponent.js
+housebots/opponent-ai.js
